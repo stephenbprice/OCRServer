@@ -14,6 +14,8 @@
     "morgan": "~1.6.1",
     "serve-favicon": "~2.3.0",
     "tmp": "0.0.28",
-    "async": "~1.5.2"
+    "async": "~1.5.2",
+    "db-migrate": "~0.10.0",
+    "node-mysql": "~0.4.2"
   }
 }
