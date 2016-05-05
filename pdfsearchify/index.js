@@ -61,11 +61,11 @@ function createPDFSearchify(options) {
     function extractPNM(processInfo, cb) {
         searchify.emit('extractPNM', { processInfo: processInfo});
         var extractPageTime = process.hrtime();
-        processInfo.files.originPNM = path.join(processInfo.outdir, 'original-'+processInfo.pagenum+'.pnm');
+        processInfo.tmpfiles.originPNM = path.join(processInfo.outdir, 'original-'+processInfo.pagenum+'.pnm');
         exec(
             'gs -dNOPAUSE -dSAFER -sDEVICE=pnmraw '+
             '-r'+upsample+' -dFirstPage='+processInfo.pagenum+' -dLastPage='+processInfo.pagenum+' '+
-            '-dBatch -o "'+processInfo.files.originPNM+'" "'+processInfo.infile+'"',
+            '-dBatch -o "'+processInfo.tmpfiles.originPNM+'" "'+processInfo.infile+'"',
             function(err, stdout, stderr) {
                 if (err) {
                     return cb(err);
@@ -80,7 +80,7 @@ function createPDFSearchify(options) {
     function detectColor(processInfo, cb) {
         searchify.emit('detectColor', { processInfo: processInfo});
         var detectColorTime = process.hrtime();
-        exec('python ./utils/detectColor.py '+processInfo.files.originPNM, function(err, stdout, stderr) {
+        exec('python ./utils/detectColor.py '+processInfo.tmpfiles.originPNM, function(err, stdout, stderr) {
             if (err) {
                 return cb(err);
             } else {
@@ -94,8 +94,8 @@ function createPDFSearchify(options) {
     function deskewPNM(processInfo, cb) {
         searchify.emit('deskewPNM', { processInfo: processInfo });
         var deskewPageTime = process.hrtime();
-        processInfo.files.deskewPNM = path.join(processInfo.outdir, 'deskew-'+processInfo.pagenum+'.pnm');
-        exec('convert "'+processInfo.files.originPNM+'" -deskew 40% "'+processInfo.files.deskewPNM+'"', function(err, stdout, stderr) {
+        processInfo.tmpfiles.deskewPNM = path.join(processInfo.outdir, 'deskew-'+processInfo.pagenum+'.pnm');
+        exec('convert "'+processInfo.tmpfiles.originPNM+'" -deskew 40% "'+processInfo.tmpfiles.deskewPNM+'"', function(err, stdout, stderr) {
             if (err) {
                 return cb(err);
             } else {
@@ -108,7 +108,7 @@ function createPDFSearchify(options) {
     function preprocessPage(processInfo, cb) {
         searchify.emit('preprocessPage', { processInfo: processInfo });
         var preprocessPageTime = process.hrtime();
-        processInfo.files.preprocPNM = path.join(processInfo.outdir, 'preprocessed-'+processInfo.pagenum+'.pnm');
+        processInfo.tmpfiles.preprocPNM = path.join(processInfo.outdir, 'preprocessed-'+processInfo.pagenum+'.pnm');
         var convertOptions;
         switch (preprocess) {
             case 'quick':
@@ -119,7 +119,7 @@ function createPDFSearchify(options) {
                 convertOptions = '-respect-parenthesis \\( -clone 0 -colorspace gray -negate -lat 15x15+5% -contrast-stretch 0 \\) -compose copy_opacity -composite -opaque none +matte -modulate 100,100 -blur 1x1 -adaptive-sharpen 0x2 -negate -define morphology:compose=darken -morphology Thinning Rectangle:1x30+0+0 -negate';
                 break;
         }
-        exec('convert "'+processInfo.files.deskewPNM+'" '+convertOptions+' "'+processInfo.files.preprocPNM+'"', function(err, stdout, stderr) {
+        exec('convert "'+processInfo.tmpfiles.deskewPNM+'" '+convertOptions+' "'+processInfo.tmpfiles.preprocPNM+'"', function(err, stdout, stderr) {
             if (err) {
                 return cb(err);
             } else {
@@ -132,12 +132,12 @@ function createPDFSearchify(options) {
     function ocrPage(processInfo, cb) {
         searchify.emit('ocrPage', { processInfo: processInfo});
         var ocrPageTime = process.hrtime();
-        processInfo.files.hocr = path.join(processInfo.outdir, 'ocr-'+processInfo.pagenum+'.hocr');
+        processInfo.hocr = path.join(processInfo.outdir, 'ocr-'+processInfo.pagenum+'.hocr');
         var outfilebase = path.join(
-            path.dirname(processInfo.files.hocr),
-            path.basename(processInfo.files.hocr, '.hocr')
+            path.dirname(processInfo.hocr),
+            path.basename(processInfo.hocr, '.hocr')
         );
-        exec('tesseract "'+processInfo.files.preprocPNM+'" "'+outfilebase+'" hocr', function(err, stdout, stderr) {
+        exec('tesseract "'+processInfo.tmpfiles.preprocPNM+'" "'+outfilebase+'" hocr', function(err, stdout, stderr) {
             if (err) {
                 return cb(err);
             } else {
@@ -153,8 +153,8 @@ function createPDFSearchify(options) {
         }
         searchify.emit('downsamplePage', { processInfo: processInfo });
         var downsamplePageTime = process.hrtime();
-        processInfo.files.downsamplePNM = path.join(processInfo.outdir, 'downsample-'+processInfo.pagenum+'.pnm');
-        exec('convert -density '+upsample+' "'+processInfo.files.deskewPNM+'" -resample '+downsample+' "'+processInfo.files.downsamplePNM+'"', function(err, stdout, stderr) {
+        processInfo.pageImage = path.join(processInfo.outdir, 'downsample-'+processInfo.pagenum+'.pnm');
+        exec('convert -density '+upsample+' "'+processInfo.tmpfiles.deskewPNM+'" -resample '+downsample+' "'+processInfo.pageImage+'"', function(err, stdout, stderr) {
             if (err) {
                 return cb(err);
             } else {
@@ -163,70 +163,102 @@ function createPDFSearchify(options) {
             }
         });
     }
-    
-    function composePage(processInfo, cb) {
-        searchify.emit('composePage', { processInfo: processInfo });
-        var composePageTime = process.hrtime();
-        var outfile = path.join(processInfo.outdir, 'pdf-'+processInfo.pagenum+'.pdf');
-        var pageImagePNM = processInfo.files.downsamplePNM || processInfo.files.deskewPNM;
-        if (processInfo.colorcode === "0") {
-            processInfo.files.jbig2 = path.join(processInfo.outdir, 'jbig2-'+processInfo.pagenum+'.pdf');
-            exec('jbig2 -s -p -v "'+pageImagePNM+'" && ./utils/pdf.py output '+(downsample || upsample)+' > "'+processInfo.files.jbig2+'"', function(err, stdout, stderr) {
-                if (err) {
-                    return cb(err);
-                } else {
-                    exec('python utils/hocr-pdf PDF "'+processInfo.files.jbig2+'" "'+processInfo.files.hocr+'" "'+outfile+'" '+(downsample || upsample)+' '+upsample, function(err, stdout, stderr) {
-                        if (err) {
-                            return cb(err);
-                        } else {
-                            searchify.emit('pageComposed', { processInfo: processInfo, time: process.hrtime(composePageTime), });
-                            return unlinkFilesCallback(processInfo['files'], function(err) {
-                                return cb(err, outfile);
-                            });
-                        }
-                    });
-                }
-            });
+
+    function composeJBIG2(pages, tmpdir, cb) {
+        var composeJBIG2Time = process.hrtime();
+        var jbig2PDF = path.join(tmpdir, 'jbig2.pdf');
+        var imgfiles = pages.map(function(x) { 
+            if (x.colorcode === "0") return x.pageInfo.pageImage; 
+        });
+        if (imgfiles.length === 0) {
+            searchify.emit('composedJBIG2', { processInfo: pages[0].pageInfo, time: process.hrtime(composeJBIG2Time), });
+            return cb(null, null);
         } else {
-            processInfo.files.jpeg = path.join(processInfo.outdir, 'jpeg-'+processInfo.pagenum+'.jpg');
-            var grayscale = (processInfo.colorcode === "1" ? ' -grayscale ' : '');
-            exec('pnmtojpeg --optimize '+grayscale+'"'+pageImagePNM+'" > "'+processInfo.files.jpeg+'"', function(err, stdout, stderr) {
+            imgfiles = imgfiles.join('" "');
+            searchify.emit('composeJBIG2', { processInfo: pages[0].pageInfo });
+            exec('jbig2 -s -p -v "'+imgfiles+'" && ./utils/pdf.py output '+(downsample || upsample)+' > "'+jbig2PDF+'"', function(err, stdout, stderr) {
                 if (err) {
                     return cb(err);
                 } else {
-                    exec('python utils/hocr-pdf JPEG "'+processInfo.files.jpeg+'" "'+processInfo.files.hocr+'" "'+outfile+'" '+(downsample || upsample)+' '+upsample, function(err, stdout, stderr) {
-                        if (err) {
-                            return cb(err);
-                        } else {
-                            searchify.emit('pageComposed', { processInfo: processInfo, time: process.hrtime(composePageTime), });
-                            return unlinkFilesCallback(processInfo.files, function(err) {
-                                return cb(err, outfile);
-                            });
-                        }
-                    });
+                    searchify.emit('composedJBIG2', { processInfo: pages[0].pageInfo, time: process.hrtime(composeJBIG2Time), });
+                    return cb(null, jbig2PDF);
                 }
             });
         }
     }
 
-    function composePDF(infiles, pdfinfofile, outdir, outfile, cb) {
-        var composeTime = process.hrtime();
-        var tempoutfile = path.join(outdir, 'composed.pdf');
-        searchify.emit('compose', { outfile: outfile, });
-        var infileargs = infiles.map(function(infile) { return '"'+infile+'"'; }).join(' ');
-        exec('pdftk '+infileargs+' output '+tempoutfile, function(err, stdout, stderr) {
-            if (err) {
-                return cb(err);
-            }
-            updatePDFInfo(tempoutfile, pdfinfofile, outfile, function(err) {
+    function composeJPEG(pages, tmpdir, cb) {
+        searchify.emit('composeJPEG', { processInfo: pages[0].pageInfo });
+        var composeJPEGTime = process.hrtime();
+        var jpegPDF = path.join(tmpdir, 'jpeg.pdf');
+        var imgfiles = []
+        pages.map(function(x) {
+            if (x.colorcode !== "0") return imgfiles.push(x.pageInfo.pageImage);
+        });
+        if (imgfiles.length === 0) {
+            searchify.emit('composedJPEG', { processInfo: pages[0].pageInfo, time: process.hrtime(composeJPEGTime), });
+            return cb(null, null);
+        } else {
+            exec('convert "'+imgfiles+'" "'+jpegPDF+'"', function(err, stdout, stderr) {
                 if (err) {
                     return cb(err);
+                } else {
+                    searchify.emit('composedJPEG', { processInfo: pages[0].pageInfo, time: process.hrtime(composeJPEGTime), });
+                    return cb(null, jpegPDF);
                 }
-                searchify.emit('composed', { outfile: outfile, time: process.hrtime(composeTime), });
-                return unlinkFilesCallback([tempoutfile, pdfinfofile], function(err) {
-                    return cb(null, outfile);
-                });
             });
+        }
+    }
+
+    function mergePDF(pages, jbig2PDF, jpegPDF, tmpdir, cb) {
+        var mergePDFTime = process.hrtime();
+        var mergedpdf = path.join(tmpdir, 'merged.pdf');
+        var jbig2index = 1;
+        var jpegindex = 1;
+        var mergestatement = [];
+        searchify.emit('mergePDF', { processInfo: pages[0].pageInfo });
+        if (!jbig2PDF) {
+            searchify.emit('mergedPDF', { processInfo: pages[0].pageInfo, time: process.hrtime(mergePDFTime), });
+            return cb(null, jpegPDF);
+        } else if (!jpegPDF) {
+            searchify.emit('mergedPDF', { processInfo: pages[0].pageInfo, time: process.hrtime(mergePDFTime), });
+            return cb(null, jbig2PDF);
+        } else {
+            pages.forEach(function(x) {
+                if (x.colorcode === "0") {
+                    mergestatement.push('A'+jbig2index);
+                    jbig2index += 1;
+                } else {
+                    mergestatement.push('B'+jpegindex);
+                    jpegindex += 1;
+                }
+            });
+            mergestatement = mergestatement.join(' ');
+            console.log(mergestatement);
+            exec('pdftk A="'+jbig2PDF+'" B="'+jpegPDF+'" cat '+mergestatement+' output "'+mergedpdf+'"', function(err, stdout, stderr) {
+                if (err) {
+                    return cb(err);
+                } else {
+                    searchify.emit('mergedPDF', { processInfo: pages[0].pageInfo, time: process.hrtime(mergePDFTime), });
+                    return cb(null, mergedpdf);
+                }
+            });
+        }
+    }
+
+    function addPDFText(pages, pdf, tmpdir, cb) {
+        var addTextTime = process.hrtime();
+        var outfile = path.join(tmpdir, 'searchified.pdf');
+        var hocrfiles = ['output="'+outfile+'"'];
+        searchify.emit('add text', { processInfo: pages[0].pageInfo });
+        pages.map(function(x) { hocrfiles.push(x.pagenum+'="'+x.pageInfo.hocr+'"'); });
+        exec('python utils/hocr-pdf '+hocrfiles.join(' ')+' "'+pdf+'"', function(err, stdout, stderr) {
+            if (err) {
+                return cb(err);
+            } else {
+                searchify.emit('text added', { processInfo: pages[0].pageInfo, time: process.hrtime(addTextTime), });
+                return cb(null, outfile);
+            }
         });
     }
 
@@ -240,7 +272,6 @@ function createPDFSearchify(options) {
             preprocessPage,
             ocrPage,
             downsamplePage,
-            composePage,
         ], function(err, outfile) {
             if (err) {
                 return cb(err);
@@ -254,7 +285,7 @@ function createPDFSearchify(options) {
     function searchify(infile, outfile, cb) {
         var startTime = process.hrtime();
         searchify.emit('start', { infile: infile, outfile: outfile, });
-        var pdfpages = [];
+        var pages = [];
         getPDFPageCount(infile, function(err, pagecount) {
             if (err) {
                 return cb(err);
@@ -271,14 +302,21 @@ function createPDFSearchify(options) {
                                 "infile": infile,
                                 "outdir": tmpdir,
                                 "pagenum": i,
-                                "files": {}
+                                "colorcode": null,
+                                "hocr": null,
+                                "pageImage": null,
+                                "tmpfiles": {}
                             }
                             tasks.push(function(cb) {
-                                searchifyPage(processInfo, function(err, outfile) {
+                                searchifyPage(processInfo, function(err, outInfo) {
                                     if (err) {
                                         return cb(err);
                                     }
-                                    pdfpages.push(outfile);
+                                    pages.push({
+                                        pagenum: outInfo.pagenum,
+                                        pageInfo: outInfo,
+                                        colorcode: outInfo.colorcode
+                                    });
                                     return cb();
                                 });
                             });
@@ -288,25 +326,39 @@ function createPDFSearchify(options) {
                         if (err) {
                             return cb(err);
                         }
-                        composePDF(pdfpages, pdfinfofile, tmpdir, outfile, function(err, outfile) {
+                        pages = pages.sort(function(a,b) {return a.pagenum - b.pagenum;});
+                        composeJBIG2(pages, tmpdir, function(err, jbig2pdf) {
                             if (err) {
                                 return cb(err);
                             }
-                            searchify.emit('done', { infile: infile, outfile: outfile, time: process.hrtime(startTime), });
-                            return unlinkFilesCallback(pdfpages, function(err) {
+                            composeJPEG(pages, tmpdir, function(err, jpegpdf) {
                                 if (err) {
                                     return cb(err);
-                                } else if (keepfiles) {
-                                    return cb();
-                                } else {
-                                    fs.rmdir(tmpdir, function(err) {
-                                        if (!err || err.code === 'ENOTEMPTY') {
-                                            return cb();
-                                        } else {
+                                }
+                                mergePDF(pages, jbig2pdf, jpegpdf, tmpdir, function(err, mergedpdf) {
+                                    if (err) {
+                                        return cb(err);
+                                    }
+                                    addPDFText(pages, mergedpdf, tmpdir, function(err, searchifiedpdf) {
+                                        if (err) {
                                             return cb(err);
                                         }
+                                        updatePDFInfo(searchifiedpdf, pdfinfofile, outfile, function(err, outfile) {
+                                            if (err) {
+                                                return cb(err);
+                                            } else {
+                                                searchify.emit('done', { infile: infile, outfile: outfile, time: process.hrtime(startTime), });
+                                                fs.rmdir(tmpdir, function(err) {
+                                                    if (!err || err.code === 'ENOTEMPTY') {
+                                                        return cb();
+                                                    } else {
+                                                        return cb(err);
+                                                    }
+                                                });
+                                            }
+                                        });
                                     });
-                                }
+                                });
                             });
                         });
                     });

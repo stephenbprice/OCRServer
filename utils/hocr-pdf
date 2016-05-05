@@ -33,55 +33,30 @@ from reportlab.pdfbase.ttfonts import TTFont
 from xml.etree.ElementTree import ElementTree, ParseError
 from PyPDF2 import PdfFileReader, PdfFileWriter
 
-def export_pdf(bgtype, image, hocrfile, pdffile, default_dpi, hocr_dpi):
+def add_hocr(basepdf, pages, outfile, dpi=300, hocr_dpi=300):
   """Create a searchable PDF from a pile of HOCR + JPEG"""
-
-  if hocr_dpi == None: hocr_dpi = default_dpi
-  if bgtype == 'JPEG':
-      #load_invisible_font()
-      pdf = Canvas(pdffile, pageCompression=1)
-      dpi = default_dpi
-      im = Image.open(image)
-      w, h = im.size
-      try:
-        dpi = im.info['dpi'][0]
-      except KeyError:
-        pass
-      width = w * 72 / dpi
-      height = h * 72 / dpi
-      pdf.setPageSize((width, height))
-      pdf.drawImage(image, 0, 0, width=width, height=height)
-      add_text_layer(pdf, image, hocrfile, height, hocr_dpi)
-      pdf.showPage()
-      pdf.save()
-
-  elif bgtype == 'PDF':
+  original_pdf = PdfFileReader(file(basepdf, "rb"))
+  output = PdfFileWriter()
+  for page in pages:
       packet = StringIO.StringIO()
-      original_pdf = PdfFileReader(file(image, "rb"))
       can = Canvas(packet, pageCompression=1)
-      dpi = default_dpi
-      orig_mediabox = original_pdf.getPage(0).mediaBox
+      original_page = original_pdf.getPage(int(page['pagenum'])-1)
+      orig_mediabox = original_page.mediaBox
       width = orig_mediabox[2]
       height = orig_mediabox[3]
       can.setPageSize((width, height))
-      add_text_layer(can, image, hocrfile, height, hocr_dpi)
+      add_text_layer(can, page['hocr'], height, hocr_dpi)
       can.showPage()
       can.save()
-
       packet.seek(0)
       new_pdf = PdfFileReader(packet)
-      output = PdfFileWriter()
-      page = original_pdf.getPage(0)
-      page.mergePage(new_pdf.getPage(0))
-      output.addPage(page)
-      outputStream = file(pdffile, "wb")
-      output.write(outputStream)
-      outputStream.close()
+      original_page.mergePage(new_pdf.getPage(0))
+      output.addPage(original_page)
+  outputStream = file(outfile, 'wb')
+  output.write(outputStream)
+  outputStream.close()
 
-  else:
-      sys.stderr.write('Background Type must be PDF or JPEG');
-
-def add_text_layer(pdf, image, hocrfile, height, dpi):
+def add_text_layer(pdf, hocrfile, height, dpi):
   """Draw an invisible text layer for OCR data"""
   p1 = re.compile('bbox((\s+\d+){4})')
   p2 = re.compile('baseline((\s+[\d\.\-]+){2})')
@@ -110,7 +85,6 @@ def add_text_layer(pdf, image, hocrfile, height, dpi):
             rawtext = innerword.text.strip()
         except:
           continue
-      #font_width = pdf.stringWidth(rawtext, 'invisible', 8)
       font_width = pdf.stringWidth(rawtext, 'Courier', 8)
       if font_width <= 0:
         continue
@@ -119,7 +93,6 @@ def add_text_layer(pdf, image, hocrfile, height, dpi):
       b = polyval(baseline, (box[0] + box[2]) / 2 - linebox[0]) + linebox[3]
       text = pdf.beginText()
       text.setTextRenderMode(3)  # double invisible
-      #text.setFont('invisible', 8)
       text.setFont('Courier', 8)
       text.setTextOrigin(box[0] * 72 / dpi, float(height) - float(b) * 72 / dpi)
       box_width = (box[2] - box[0]) * 72 / dpi
@@ -160,7 +133,20 @@ CMGjwvxTsr74/f/F95m3TH9x8o0/TU//N+7/D/ScVcA=
   pdfmetrics.registerFont(TTFont('invisible', ttf))
 
 if __name__ == "__main__":
-  if len(sys.argv) == 1:
-    print("Usage: %s <source image> <background type> <hocr file> <output pdf> [dpi] [hocrdpi]\n" % os.path.basename(sys.argv[0]))
-  else:
-    export_pdf(sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4], int(sys.argv[5]) if len(sys.argv) > 5 else 300, int(sys.argv[6]) if len(sys.argv) > 6 else None)
+    pages = []
+    basefile = sys.argv[-1]
+    output = None
+    for arg in sys.argv[1:-1]:
+        arg = arg.split('=')
+        if len(arg) == 2:
+            if arg[0] == 'output':
+                output = arg[1]
+            else:
+                pages.append({
+                    'pagenum': arg[0],
+                    'hocr': arg[1]
+                });
+    if not output or len(sys.argv) < 4:
+        print("Usage: %s 1=firstpage.hocr 2=secondpage.hocr o=outputfile.pdf base.pdf\n" % os.path.basename(sys.argv[0]))
+    else:
+        add_hocr(basefile, pages, output)

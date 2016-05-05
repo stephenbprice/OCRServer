@@ -140,8 +140,12 @@ function startOCRManager(settingspath) {
         pdfsearchify.on('pagePreprocessed', function(o) { winston.info('Page pre-processed: '+o.processInfo.pagenum+' ('+hrTimeString(o.time)+')'); });
         pdfsearchify.on('ocrPage', function(o) { winston.info('Ocring page: '+o.processInfo.pagenum); });
         pdfsearchify.on('pageOcred', function(o) { winston.info('Ocred page: '+o.processInfo.pagenum+' ('+hrTimeString(o.time)+')'); });
-        pdfsearchify.on('composePage', function(o) { winston.info('Composing page: '+o.processInfo.pagenum); });
-        pdfsearchify.on('pageComposed', function(o) { winston.info('Composed page: '+o.processInfo.pagenum+' ('+hrTimeString(o.time)+')'); });
+        pdfsearchify.on('composeJBIG2', function(o) { winston.info('Composing JBIG2PDF: '+o.infile); });
+        pdfsearchify.on('composedJBIG2', function(o) { winston.info('Composed JBIG2PDF: '+o.infile+' ('+hrTimeString(o.time)+')'); });
+        pdfsearchify.on('composeJPEG', function(o) { winston.info('Composing JPEGPDF: '+o.infile); });
+        pdfsearchify.on('composedJPEG', function(o) { winston.info('Composed JPEGPDF: '+o.infile+' ('+hrTimeString(o.time)+')'); });
+        pdfsearchify.on('mergePDF', function(o) { winston.info('Merging PDF: '+o.infile); });
+        pdfsearchify.on('mergedPDF', function(o) { winston.info('Merged PDF: '+o.infile+' ('+hrTimeString(o.time)+')'); });
         pdfsearchify.on('done', function(o) { winston.info('Done: '+o.infile+' ('+hrTimeString(o.time)+')'); });
         cb(null);
     }
